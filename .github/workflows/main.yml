@@ -64,12 +64,3 @@ jobs:
             git push -f origin HEAD:main
             echo "✅ 更改已推送"
           fi
-      
-      - name: ⏳ 等待后重新触发
-        if: always()
-        run: |
-          echo "等待 20 秒后重新触发..."
-          sleep 20
-          gh workflow run "${{ github.workflow }}" --ref "${{ github.ref }}"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
