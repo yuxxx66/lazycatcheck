@@ -225,7 +225,7 @@ if __name__ == "__main__":
     first_elapsed = time.time() - start_time
     
     # 根据第一次执行时间计算能跑多少次
-    loop_count = max(1, 600 // int(first_elapsed + 1))  # +1 是为了留点余量
+    loop_count = max(1, 600 // int(max(first_elapsed, 1) + 1))  # +1 是为了留点余量
     log_message(f"📊 第一次执行耗时 {first_elapsed:.1f} 秒，本次运行将执行 {loop_count} 次检查")
     
     # 执行剩余的循环
