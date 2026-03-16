@@ -4,14 +4,20 @@ import time
 import os
 import re
 import sqlite3
+import json
+import subprocess
+import signal
+import socket
 from datetime import datetime
 from bs4 import BeautifulSoup
+from urllib.parse import urlparse, parse_qs, unquote
 
 DB_FILE = "inventory.db"
 BASE_URL = "https://lxc.lazycat.wiki/cart"
 FID = os.getenv('FID', '25')
 LOG_FILE = "inventory.log"
 DATA_DIR = "server_data"
+SOCKS_PORT = 10808
 
 # 确保数据目录存在
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -21,9 +27,12 @@ LOG_FILE = os.path.join(DATA_DIR, LOG_FILE)
 # TG 配置（从环境变量读取，如果未设置则使用默认值）
 TG_TOKEN = os.getenv('TG_TOKEN', '')
 TG_CHAT_ID = os.getenv('TG_CHAT_ID', '')
+HY2_PROXY_URL = os.getenv('HY2_PROXY_URL', '')
 
 # 内存缓存，存储上一次的库存状态
 _inventory_cache = {}
+_proxy_manager = None
+_proxy_url = None
 
 def log_message(message):
     """记录日志"""
@@ -32,6 +41,100 @@ def log_message(message):
     print(log_entry)
     with open(LOG_FILE, 'a', encoding='utf-8') as f:
         f.write(log_entry + '\n')
+
+class Hy2Proxy:
+    """Hysteria2 代理管理器"""
+    def __init__(self, url: str):
+        self.url = url
+        self.proc = None
+
+    def start(self) -> bool:
+        log_message("📡 启动 Hysteria2…")
+
+        u = self.url.replace("hysteria2://", "").replace("hy2://", "")
+        parsed = urlparse("scheme://" + u)
+        params = parse_qs(parsed.query)
+
+        # 处理 insecure 参数（支持 insecure 和 allowInsecure）
+        insecure_val = params.get("insecure", params.get("allowInsecure", ["0"]))[0]
+        insecure = insecure_val == "1"
+
+        cfg = {
+            "server": f"{parsed.hostname}:{parsed.port}",
+            "auth": unquote(parsed.username),
+            "tls": {
+                "sni": params.get("sni", [parsed.hostname])[0],
+                "insecure": insecure,
+                "alpn": params.get("alpn", ["h3"]),
+            },
+            "socks5": {"listen": f"127.0.0.1:{SOCKS_PORT}"}
+        }
+
+        cfg_path = "/tmp/hy2.json"
+        with open(cfg_path, "w") as f:
+            json.dump(cfg, f)
+
+        try:
+            self.proc = subprocess.Popen(
+                ["hysteria", "client", "-c", cfg_path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True
+            )
+        except FileNotFoundError:
+            log_message("❌ hysteria 命令未找到，请先安装 Hysteria2")
+            return False
+
+        for _ in range(12):
+            time.sleep(1)
+            with socket.socket() as s:
+                if s.connect_ex(("127.0.0.1", SOCKS_PORT)) == 0:
+                    log_message("✅ Hy2 SOCKS5 已就绪")
+                    return True
+        return False
+
+    def stop(self):
+        if self.proc:
+            os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
+            log_message("🛑 Hy2 已停止")
+
+    @property
+    def proxy(self):
+        return f"socks5://127.0.0.1:{SOCKS_PORT}"
+
+def get_proxy_manager():
+    """根据环境变量判断是否需要使用代理"""
+    if HY2_PROXY_URL:
+        return Hy2Proxy(HY2_PROXY_URL)
+    return None
+
+def start_proxy_with_retry(max_retries=3):
+    """启动代理，失败时重试"""
+    if not HY2_PROXY_URL:
+        log_message("⚠️ 未配置代理 URL，使用直连模式")
+        return None, None
+    
+    proxy_manager = get_proxy_manager()
+    proxy_url = None
+    
+    if not proxy_manager:
+        log_message("⚠️ 代理管理器初始化失败，使用直连模式")
+        return None, None
+    
+    for attempt in range(1, max_retries + 1):
+        log_message(f"🔄 尝试启动代理 ({attempt}/{max_retries})...")
+        if proxy_manager.start():
+            proxy_url = proxy_manager.proxy
+            log_message(f"✅ 代理已启动：{proxy_url}")
+            return proxy_manager, proxy_url
+        else:
+            if attempt < max_retries:
+                log_message(f"⏳ 等待 5 秒后重试...")
+                time.sleep(5)
+            else:
+                log_message("⚠️ 代理启动失败，继续使用直连模式")
+    
+    return None, None
 
 def init_db():
     """初始化数据库"""
@@ -79,13 +182,26 @@ def update_stock(server_name, stock):
 
 def get_servers_inventory():
     """获取所有服务器的库存信息"""
+    global _proxy_url
     url = f"{BASE_URL}?fid={FID}"
     
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Referer': 'https://lxc.lazycat.wiki/',
         }
-        response = requests.get(url, headers=headers, timeout=10)
+        
+        # 使用全局代理
+        proxies = None
+        if _proxy_url:
+            proxies = {"http": _proxy_url, "https": _proxy_url}
+        
+        response = requests.get(url, headers=headers, timeout=10, proxies=proxies)
         response.encoding = 'utf-8'
         
         # 解析 HTML
@@ -95,6 +211,9 @@ def get_servers_inventory():
         
         # 找到所有 class="col-sm-6 col-md-4 col-lg-4 col-xl-4 col-xxl-3 d-flex" 的 div
         server_divs = soup.find_all('div', class_='col-sm-6 col-md-4 col-lg-4 col-xl-4 col-xxl-3 d-flex')
+        
+        if not server_divs:
+            log_message(f"⚠️ 未找到服务器 div，HTML 长度: {len(response.text)}")
         
         for div in server_divs:
             try:
@@ -114,6 +233,7 @@ def get_servers_inventory():
                         match = re.search(r'库存[：:]\s*(\d+)', text)
                         if match:
                             stock = int(match.group(1))
+                            log_message(f"  📦 {server_name}: 库存 {stock}")
                         break
                 
                 servers[server_name] = stock
@@ -207,7 +327,12 @@ def monitor_inventory():
         log_message(f"❌ 监控异常: {e}")
 
 if __name__ == "__main__":
+    global _proxy_manager, _proxy_url
+    
     init_db()  # 初始化数据库
+    
+    # 启动代理（带重试）
+    _proxy_manager, _proxy_url = start_proxy_with_retry()
     
     # 从数据库加载缓存（只执行一次）
     log_message("📥 从数据库加载库存缓存")
@@ -218,22 +343,27 @@ if __name__ == "__main__":
         _inventory_cache[server_name] = stock
     conn.close()
     
-    # 第一次执行，测量执行时间
-    log_message("--- 第 1 次检查 ---")
-    start_time = time.time()
-    monitor_inventory()
-    first_elapsed = time.time() - start_time
-    
-    # 根据第一次执行时间计算能跑多少次
-    loop_count = max(1, 600 // int(max(first_elapsed, 1) + 1))  # +1 是为了留点余量
-    log_message(f"📊 第一次执行耗时 {first_elapsed:.1f} 秒，本次运行将执行 {loop_count} 次检查")
-    
-    # 执行剩余的循环
-    for i in range(1, loop_count):
-        log_message(f"--- 第 {i+1} 次检查 ---")
+    try:
+        # 第一次执行，测量执行时间
+        log_message("--- 第 1 次检查 ---")
         start_time = time.time()
         monitor_inventory()
-        elapsed_time = time.time() - start_time
-        log_message(f"⏳ 本次执行耗时 {elapsed_time:.1f} 秒")
-    
-    log_message(f"✅ 本次运行完成，共执行 {loop_count} 次检查")
+        first_elapsed = time.time() - start_time
+        
+        # 根据第一次执行时间计算能跑多少次
+        loop_count = max(1, 600 // int(max(first_elapsed, 1) + 1))  # +1 是为了留点余量
+        log_message(f"📊 第一次执行耗时 {first_elapsed:.1f} 秒，本次运行将执行 {loop_count} 次检查")
+        
+        # 执行剩余的循环
+        for i in range(1, loop_count):
+            log_message(f"--- 第 {i+1} 次检查 ---")
+            start_time = time.time()
+            monitor_inventory()
+            elapsed_time = time.time() - start_time
+            log_message(f"⏳ 本次执行耗时 {elapsed_time:.1f} 秒")
+        
+        log_message(f"✅ 本次运行完成，共执行 {loop_count} 次检查")
+    finally:
+        # 停止代理
+        if _proxy_manager:
+            _proxy_manager.stop()
