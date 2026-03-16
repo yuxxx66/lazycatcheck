@@ -1,8 +1,16 @@
 name: 📊 懒猫库存监控 
 
+on:
+  schedule:
+    # 每 10 分钟执行一次
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
 env:
   HY2_PROXY_URL: ${{ secrets.HY2_PROXY_URL }}
-  SOCKS_PORT: ${{ secrets.SOCKS_PORT || '10808' }}
+  SOCKS_PORT: ${{ secrets.SOCKS_PORT || '51080' }}
+  TG_TOKEN: ${{ secrets.TG_TOKEN }}
+  TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
 
 permissions:
   contents: write
@@ -46,10 +54,7 @@ jobs:
       
       - name: 🚀 运行库存监控
         env:
-          TG_TOKEN: ${{ secrets.TG_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           FID: '25'
-          HY2_PROXY_URL: ${{ env.HY2_PROXY_URL }}
         run: python server.py
       
       - name: 📤 提交数据变化和执行时间
