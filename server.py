@@ -405,13 +405,13 @@ if __name__ == "__main__":
             
             # 计算需要等待的时间
             wait_time = interval - elapsed_time
-            if wait_time > 0 and total_elapsed + wait_time < 600:
+            if wait_time > 0:
                 log_message(f"⏳ 等待 {wait_time:.1f} 秒...")
                 time.sleep(wait_time)
                 total_elapsed += interval
             else:
-                total_elapsed += elapsed_time
-                break
+                # 执行时间超过间隔，按向上取整计算
+                total_elapsed += math.ceil(elapsed_time)
             
             log_message(f"📊 累计运行时间: {total_elapsed:.1f} 秒")
         
