@@ -31,8 +31,6 @@ HY2_PROXY_URL = os.getenv('HY2_PROXY_URL', '')
 
 # 内存缓存，存储上一次的库存状态
 _inventory_cache = {}
-_proxy_manager = None
-_proxy_url = None
 
 def log_message(message):
     """记录日志"""
@@ -180,9 +178,8 @@ def update_stock(server_name, stock):
     conn.commit()
     conn.close()
 
-def get_servers_inventory():
+def get_servers_inventory(proxy_url=None):
     """获取所有服务器的库存信息"""
-    global _proxy_url
     url = f"{BASE_URL}?fid={FID}"
     
     try:
@@ -196,10 +193,10 @@ def get_servers_inventory():
             'Referer': 'https://lxc.lazycat.wiki/',
         }
         
-        # 使用全局代理
+        # 使用传入的代理
         proxies = None
-        if _proxy_url:
-            proxies = {"http": _proxy_url, "https": _proxy_url}
+        if proxy_url:
+            proxies = {"http": proxy_url, "https": proxy_url}
         
         response = requests.get(url, headers=headers, timeout=10, proxies=proxies)
         response.encoding = 'utf-8'
@@ -270,12 +267,12 @@ def send_tg_notification(message):
         print(f"❌ TG 通知异常: {e}")
         return False
 
-def monitor_inventory():
+def monitor_inventory(proxy_url=None):
     """检查库存变化"""
     global _inventory_cache
     
     try:
-        current_state = get_servers_inventory()
+        current_state = get_servers_inventory(proxy_url)
 
         if current_state is None:
             log_message(f"❌ 获取库存失败")
@@ -327,12 +324,10 @@ def monitor_inventory():
         log_message(f"❌ 监控异常: {e}")
 
 if __name__ == "__main__":
-    global _proxy_manager, _proxy_url
-    
     init_db()  # 初始化数据库
     
     # 启动代理（带重试）
-    _proxy_manager, _proxy_url = start_proxy_with_retry()
+    proxy_manager, proxy_url = start_proxy_with_retry()
     
     # 从数据库加载缓存（只执行一次）
     log_message("📥 从数据库加载库存缓存")
@@ -347,7 +342,7 @@ if __name__ == "__main__":
         # 第一次执行，测量执行时间
         log_message("--- 第 1 次检查 ---")
         start_time = time.time()
-        monitor_inventory()
+        monitor_inventory(proxy_url)
         first_elapsed = time.time() - start_time
         
         # 根据第一次执行时间计算能跑多少次
@@ -358,12 +353,18 @@ if __name__ == "__main__":
         for i in range(1, loop_count):
             log_message(f"--- 第 {i+1} 次检查 ---")
             start_time = time.time()
-            monitor_inventory()
+            monitor_inventory(proxy_url)
             elapsed_time = time.time() - start_time
             log_message(f"⏳ 本次执行耗时 {elapsed_time:.1f} 秒")
+            
+            # 计算需要等待的时间
+            wait_time = max(first_elapsed, 1) - elapsed_time
+            if wait_time > 0:
+                log_message(f"⏳ 等待 {wait_time:.1f} 秒...")
+                time.sleep(wait_time)
         
         log_message(f"✅ 本次运行完成，共执行 {loop_count} 次检查")
     finally:
         # 停止代理
-        if _proxy_manager:
-            _proxy_manager.stop()
+        if proxy_manager:
+            proxy_manager.stop()
