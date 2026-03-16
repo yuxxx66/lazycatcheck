@@ -257,7 +257,7 @@ def get_servers_inventory(proxy_url=None):
                         match = re.search(r'库存[：:]\s*(\d+)', text)
                         if match:
                             stock = int(match.group(1))
-                            log_message(f"  📦 {server_name}: 库存 {stock}")
+                            log_message(f"  ✅网站获取到 {server_name}: 库存 {stock}")
                         break
                 
                 servers[server_name] = stock
