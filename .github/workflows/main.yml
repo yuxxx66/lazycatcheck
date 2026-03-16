@@ -1,10 +1,8 @@
 name: 📊 懒猫库存监控 
 
-on:
-  schedule:
-    # 每 10 分钟执行一次
-    - cron: '*/10 * * * *'
-  workflow_dispatch:
+env:
+  HY2_PROXY_URL: ${{ secrets.HY2_PROXY_URL }}
+  SOCKS_PORT: ${{ secrets.SOCKS_PORT || '10808' }}
 
 permissions:
   contents: write
@@ -27,40 +25,52 @@ jobs:
         with:
           python-version: '3.13'
       
+      - name: � 安装 Hysteria2
+        run: |
+          if [ -n "${{ env.HY2_PROXY_URL }}" ]; then
+            echo "安装 Hysteria2..."
+            curl -L -o hysteria \
+              https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64
+            chmod +x hysteria
+            sudo mv hysteria /usr/local/bin/hysteria
+            hysteria version
+            echo "✅ Hysteria2 安装完成"
+          else
+            echo "⚠️ 未配置代理，跳过 Hysteria2 安装"
+          fi
+      
       - name: 📦 安装依赖
         run: |
           python -m pip install --upgrade pip
-          pip install requests beautifulsoup4
+          pip install requests beautifulsoup4 requests[socks]
       
       - name: 🚀 运行库存监控
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           FID: '25'
+          HY2_PROXY_URL: ${{ env.HY2_PROXY_URL }}
         run: python server.py
       
-      - name: 📤 提交数据变化
+      - name: 📤 提交数据变化和执行时间
         if: always()
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add server_data/
-          git commit -m "📊 更新库存数据 $(date '+%Y-%m-%d %H:%M:%S')" || echo "无数据变化"
-          git push
-      
-      - name: ⏱️ 提交执行时间
-        if: always()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # 添加库存数据
+          git add server_data/ 2>/dev/null || true
+          
+          # 添加执行时间
           mkdir -p server_monitor && echo "$(date +'%Y-%m-%d %H:%M:%S')" > server_monitor/time.txt
           git add server_monitor/time.txt 2>/dev/null || true
+          
+          # 检查是否有变化
           if git diff --cached --quiet; then
             echo "无变化，无需提交"
           else
             TIMESTAMP=$(date +'%Y-%m-%d %H:%M:%S')
-            git commit -m "⏱️ 更新 server_monitor 执行时间: $TIMESTAMP"
-            git fetch origin main
-            git push -f origin HEAD:main
+            git commit -m "📊 更新库存数据和执行时间: $TIMESTAMP"
+            git push
             echo "✅ 更改已推送"
           fi
