@@ -8,6 +8,7 @@ import json
 import subprocess
 import signal
 import socket
+import math
 from datetime import datetime
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs, unquote
@@ -133,6 +134,31 @@ def start_proxy_with_retry(max_retries=3):
                 log_message("⚠️ 代理启动失败，继续使用直连模式")
     
     return None, None
+
+def check_ip(proxy: str = None) -> str:
+    """检查落地 IP，明确指出是否使用了代理"""
+    try:
+        proxies = None
+        if proxy:
+            proxies = {"http": proxy, "https": proxy}
+        r = requests.get(
+            "http://ip-api.com/json/?fields=status,query,countryCode",
+            proxies=proxies,
+            timeout=30
+        ).json()
+        if r.get("status") == "success":
+            masked_ip = mask_ip(r['query'])
+            ip_str = f"{masked_ip} ({r['countryCode']})"
+            mode = "✅ 代理" if proxy else "⚠️ 直连"
+            return f"{ip_str} [{mode}]"
+    except Exception:
+        pass
+    mode = "✅ 代理" if proxy else "⚠️ 直连"
+    return f"未知 IP [{mode}]"
+
+def mask_ip(ip: str) -> str:
+    """脱敏 IP 地址"""
+    return ip.rsplit(".", 1)[0] + ".***"
 
 def init_db():
     """初始化数据库"""
@@ -329,6 +355,11 @@ if __name__ == "__main__":
     # 启动代理（带重试）
     proxy_manager, proxy_url = start_proxy_with_retry()
     
+    # 检查 IP 信息
+    log_message(f"🔍 正在检查 IP 信息（使用代理: {bool(proxy_url)})...")
+    ip_info = check_ip(proxy_url)
+    log_message(f"🌐 IP 信息：{ip_info}")
+    
     # 从数据库加载缓存（只执行一次）
     log_message("📥 从数据库加载库存缓存")
     conn = sqlite3.connect(DB_FILE)
@@ -346,8 +377,9 @@ if __name__ == "__main__":
         first_elapsed = time.time() - start_time
         
         # 根据第一次执行时间计算能跑多少次
-        loop_count = max(1, 600 // int(max(first_elapsed, 1) + 1))  # +1 是为了留点余量
-        log_message(f"📊 第一次执行耗时 {first_elapsed:.1f} 秒，本次运行将执行 {loop_count} 次检查")
+        interval = math.ceil(max(first_elapsed, 1))  # 向上取整
+        loop_count = max(1, 600 // interval)
+        log_message(f"📊 第一次执行耗时 {first_elapsed:.1f} 秒，执行间隔 {interval} 秒，本次运行将执行 {loop_count} 次检查")
         
         # 执行剩余的循环
         for i in range(1, loop_count):
@@ -358,7 +390,7 @@ if __name__ == "__main__":
             log_message(f"⏳ 本次执行耗时 {elapsed_time:.1f} 秒")
             
             # 计算需要等待的时间
-            wait_time = max(first_elapsed, 1) - elapsed_time
+            wait_time = interval - elapsed_time
             if wait_time > 0:
                 log_message(f"⏳ 等待 {wait_time:.1f} 秒...")
                 time.sleep(wait_time)
