@@ -279,7 +279,7 @@ def send_tg_notification(message):
         return False
     
     # 检查是否超过限制
-    if _tg_message_count >= 3:
+    if _tg_message_count > 3:
         log_message("⚠️ TG 消息已达到限制（3 条），跳过发送以避免风控")
         return False
     
