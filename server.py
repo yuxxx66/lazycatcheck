@@ -20,6 +20,9 @@ LOG_FILE = "inventory.log"
 DATA_DIR = "server_data"
 SOCKS_PORT = 51080
 
+
+TIME_INT=1800
+
 # 确保数据目录存在
 os.makedirs(DATA_DIR, exist_ok=True)
 DB_FILE = os.path.join(DATA_DIR, DB_FILE)
@@ -388,7 +391,7 @@ if __name__ == "__main__":
         
         # 根据第一次执行时间计算预估循环次数
         interval = math.ceil(max(first_elapsed, 1))  # 向上取整
-        estimated_loop_count = max(1, 600 // interval)
+        estimated_loop_count = max(1, TIME_INT // interval)
         log_message(f"📊 第一次执行耗时 {first_elapsed:.1f} 秒，执行间隔 {interval} 秒，预估执行 {estimated_loop_count} 次检查")
         
         # 累计运行时间
@@ -402,8 +405,8 @@ if __name__ == "__main__":
             time.sleep(wait_time)
             total_elapsed = interval
         
-        # 执行循环，直到累计时间 >= 600 秒
-        while total_elapsed < 600:
+        # 执行循环，直到累计时间 >= 1800 秒
+        while total_elapsed < TIME_INT:
             loop_count += 1
             log_message(f"--- 第 {loop_count} 次检查，已累计运行 {total_elapsed:.1f} 秒 ---")
             start_time = time.time()
