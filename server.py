@@ -17,7 +17,7 @@ BASE_URL = "https://lxc.lazycat.wiki/cart"
 FID = os.getenv('FID', '25')
 LOG_FILE = "inventory.log"
 DATA_DIR = "server_data"
-SOCKS_PORT = 10808
+SOCKS_PORT = 51080
 
 # 确保数据目录存在
 os.makedirs(DATA_DIR, exist_ok=True)
