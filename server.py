@@ -370,12 +370,13 @@ if __name__ == "__main__":
     log_message(f"🌐 IP 信息：{ip_info}")
     
     # 从数据库加载缓存（只执行一次）
-    log_message("📥 从数据库加载库存缓存")
+    log_message("📥 从数据库加载库存到内存缓存")
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('SELECT server_name, stock FROM inventory')
     for server_name, stock in cursor.fetchall():
         _inventory_cache[server_name] = stock
+        log_message(f"  📦 {server_name}: 库存 {stock}")
     conn.close()
     
     try:
@@ -393,6 +394,13 @@ if __name__ == "__main__":
         # 累计运行时间
         total_elapsed = first_elapsed
         loop_count = 1
+        
+        # 第一次执行后的等待
+        wait_time = interval - first_elapsed
+        if wait_time > 0:
+            log_message(f"⏳ 等待 {wait_time:.1f} 秒...")
+            time.sleep(wait_time)
+            total_elapsed = interval
         
         # 执行循环，直到累计时间 >= 600 秒
         while total_elapsed < 600:
