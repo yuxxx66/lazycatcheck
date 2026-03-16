@@ -32,6 +32,7 @@ HY2_PROXY_URL = os.getenv('HY2_PROXY_URL', '')
 
 # 内存缓存，存储上一次的库存状态
 _inventory_cache = {}
+_tg_message_count = 0  # TG 消息计数
 
 def log_message(message):
     """记录日志"""
@@ -271,8 +272,15 @@ def get_servers_inventory(proxy_url=None):
 
 def send_tg_notification(message):
     """发送 TG 通知"""
+    global _tg_message_count
+    
     if not TG_TOKEN or not TG_CHAT_ID:
         print("⚠️ TG 配置缺失，跳过发送")
+        return False
+    
+    # 检查是否超过限制
+    if _tg_message_count >= 3:
+        log_message("⚠️ TG 消息已达到限制（3 条），跳过发送以避免风控")
         return False
     
     url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
@@ -284,13 +292,14 @@ def send_tg_notification(message):
     try:
         response = requests.post(url, data=data, timeout=10)
         if response.status_code == 200:
-            print("✅ TG 通知已发送")
+            _tg_message_count += 1
+            log_message(f"✅ TG 通知已发送 ({_tg_message_count}/3)")
             return True
         else:
-            print(f"❌ TG 通知失败: {response.status_code}")
+            log_message(f"❌ TG 通知失败: {response.status_code}")
             return False
     except Exception as e:
-        print(f"❌ TG 通知异常: {e}")
+        log_message(f"❌ TG 通知异常: {e}")
         return False
 
 def monitor_inventory(proxy_url=None):
@@ -376,14 +385,19 @@ if __name__ == "__main__":
         monitor_inventory(proxy_url)
         first_elapsed = time.time() - start_time
         
-        # 根据第一次执行时间计算能跑多少次
+        # 根据第一次执行时间计算预估循环次数
         interval = math.ceil(max(first_elapsed, 1))  # 向上取整
-        loop_count = max(1, 600 // interval)
-        log_message(f"📊 第一次执行耗时 {first_elapsed:.1f} 秒，执行间隔 {interval} 秒，本次运行将执行 {loop_count} 次检查")
+        estimated_loop_count = max(1, 600 // interval)
+        log_message(f"📊 第一次执行耗时 {first_elapsed:.1f} 秒，执行间隔 {interval} 秒，预估执行 {estimated_loop_count} 次检查")
         
-        # 执行剩余的循环
-        for i in range(1, loop_count):
-            log_message(f"--- 第 {i+1} 次检查 ---")
+        # 累计运行时间
+        total_elapsed = first_elapsed
+        loop_count = 1
+        
+        # 执行循环，直到累计时间 >= 600 秒
+        while total_elapsed < 600:
+            loop_count += 1
+            log_message(f"--- 第 {loop_count} 次检查 ---")
             start_time = time.time()
             monitor_inventory(proxy_url)
             elapsed_time = time.time() - start_time
@@ -391,11 +405,17 @@ if __name__ == "__main__":
             
             # 计算需要等待的时间
             wait_time = interval - elapsed_time
-            if wait_time > 0:
+            if wait_time > 0 and total_elapsed + wait_time < 600:
                 log_message(f"⏳ 等待 {wait_time:.1f} 秒...")
                 time.sleep(wait_time)
+                total_elapsed += interval
+            else:
+                total_elapsed += elapsed_time
+                break
+            
+            log_message(f"📊 累计运行时间: {total_elapsed:.1f} 秒")
         
-        log_message(f"✅ 本次运行完成，共执行 {loop_count} 次检查")
+        log_message(f"✅ 本次运行完成，共执行 {loop_count} 次检查，累计运行时间 {total_elapsed:.1f} 秒")
     finally:
         # 停止代理
         if proxy_manager:
