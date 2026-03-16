@@ -397,7 +397,7 @@ if __name__ == "__main__":
         # 执行循环，直到累计时间 >= 600 秒
         while total_elapsed < 600:
             loop_count += 1
-            log_message(f"--- 第 {loop_count} 次检查 ---")
+            log_message(f"--- 第 {loop_count} 次检查，已累计运行 {total_elapsed:.1f} 秒 ---")
             start_time = time.time()
             monitor_inventory(proxy_url)
             elapsed_time = time.time() - start_time
