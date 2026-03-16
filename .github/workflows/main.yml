@@ -3,7 +3,7 @@ name: 📊 懒猫库存监控
 on:
   schedule:
     # 每 10 分钟执行一次
-    - cron: '*/10 * * * *'
+    - cron: '*/30 * * * *'
   workflow_dispatch:
 
 env:
@@ -22,7 +22,7 @@ concurrency:
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     
     steps:
       - name: 📥 检出代码
